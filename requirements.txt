@@ -1,0 +1,14 @@
+# Required
+requests>=2.31
+beautifulsoup4>=4.12
+openpyxl>=3.1
+phonenumbers>=8.13
+python-dotenv>=1.0
+
+# Optional but recommended
+dnspython>=2.6        # MX-record checks for email domains
+email-validator>=2.1  # stricter email syntax checks
+pypdf>=4.0            # read text from PDFs linked on company websites
+
+# Development
+pytest>=8.0

@@ -1,0 +1,9 @@
+# Local secrets, working data and outputs - never commit these
+.env
+ks_osint_work/
+output/
+*.xlsx
+*.csv
+!sample_data/*.csv
+__pycache__/
+.pytest_cache/
