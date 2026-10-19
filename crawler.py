@@ -162,6 +162,8 @@ def crawl_company(start_url: str, domain: str, http: PoliteSession, settings, lo
         if is_pdf and pdf_count >= settings.max_pdfs_per_company:
             continue
         r = http.fetch(url, max_bytes=settings.max_pdf_bytes if is_pdf else None)
+        if re.search(r"(?:host='|//)ww\d+\.", (r.error or "") + " " + (r.final_url or "")):
+            res.parked = True  # parking services redirect to ww<N>.<domain>
         if not r.ok:
             res.visited.append((url, r.error or f"HTTP {r.status}"))
             log("crawl", url, r.error or f"HTTP {r.status}")
@@ -208,7 +210,8 @@ def crawl_company(start_url: str, domain: str, http: PoliteSession, settings, lo
         res.pages.append(Page(final, (soup.title.string or "").strip() if soup.title and soup.title.string else "", text))
         raw_html.append((final, r.text))
         res.visited.append((final, "ok" + (" (cache)" if r.from_cache else "")))
-        if any(m in text.lower()[:3000] for m in ex.PARKED_MARKERS) and len(text) < 3000:
+        if (any(m in text.lower()[:3000] for m in ex.PARKED_MARKERS) and len(text) < 3000) or (
+                why in ("start", "homepage") and len(text) < 120 and "click here to enter" in text.lower()):
             res.parked = True
 
         for href, anchor in links:

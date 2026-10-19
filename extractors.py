@@ -22,9 +22,9 @@ except ImportError:  # pragma: no cover - documented as required
 
 # --------------------------------------------------------------------- titles
 EXEC_TITLES = [
-    r"chief executive officer", r"ceo", r"co-?founder", r"founder", r"co-?owner", r"owner",
+    r"chief executive(?: officer)?", r"ceo", r"co-?founder", r"founder", r"co-?owner", r"owner",
     r"proprietor", r"managing director", r"president", r"general manager", r"managing partner",
-    r"principal", r"director general", r"gerente general", r"director ejecutivo", r"fundador(?:a)?",
+    r"director general", r"gerente general", r"director ejecutivo", r"fundador(?:a)?",
     r"propietari[oa]", r"due[ñn]o", r"directeur g[ée]n[ée]ral", r"g[ée]rant", r"pr[ée]sident",
     r"gesch[äa]ftsf[üu]hrer(?:in)?", r"inhaber(?:in)?", r"amministratore delegato", r"titolare",
     r"pengarah urusan", r"director",
@@ -70,7 +70,9 @@ NON_NAME_WORDS = {
     "rehab", "rehabilitation", "clinic", "hospital", "national", "international", "global", "south", "north",
     "east", "west", "gold", "coast", "queensland", "brisbane", "sydney", "melbourne", "perth", "adelaide",
     "london", "cornwall", "singapore", "malaysia", "mexico", "peru", "italy", "florida", "california", "texas",
-    "board", "directors", "management",
+    "board", "directors", "management", "house", "building", "buildings", "park", "way", "close", "centre",
+    "center", "court", "lane", "drive", "place", "square", "estate", "hall", "tower", "plaza", "business", "industrial",
+    "location", "locations", "department", "clinic", "workshop", "assessors", "technicians",
     "leadership", "staff", "people", "story", "mission", "vision", "values", "history", "why", "choose",
     "how", "what", "who", "we", "are", "is", "you", "your", "get", "touch", "quote", "request", "book", "now",
 }
@@ -184,6 +186,8 @@ def classify_title(text: str) -> tuple[str, str] | None:
 
 
 def clean_name(candidate: str) -> str | None:
+    if "\n" in candidate:
+        return None
     cand = HONORIFICS.sub("", candidate.strip(" ,.-–—:|"))
     tokens = cand.split()
     if not 2 <= len(tokens) <= 4 or len(cand) > 40:
@@ -241,6 +245,8 @@ def _people_from_jsonld(soup: BeautifulSoup, url: str, source_type: str) -> list
 _FOUNDED_BY = re.compile(
     r"\b(?:founded|established|started|owned|run|created|led|managed)\s+(?:in\s+\d{4}\s+)?by\s+"
     r"((?:[A-ZÀ-Þ][\w'’-]+\s?){2,4})", re.U)
+_NAME_FOUNDED = re.compile(r"\b([A-ZÀ-Þ][a-zà-ÿ'’-]+(?:[ ][A-ZÀ-Þ][a-zà-ÿ'’-]+){0,2})[ ]+(?i:founded|established|started|set up)\s+[A-Z]")
+_PROFILE_SLUG = re.compile(r"/(?:team|people|staff|our-team|about-us/team|meet-the-team)/([a-z]+(?:-[a-z]+){1,2})/?$")
 _I_AM = re.compile(
     r"\b(?:my name is|i am|i'm)\s+((?:[A-ZÀ-Þ][\w'’-]+\s?){2,3})[, ]+(?:and\s+i(?:'m| am)\s+)?(?:the\s+)?"
     r"((?:co-?)?(?:founder|owner|managing director|director|ceo))", re.I | re.U)
@@ -284,6 +290,19 @@ def extract_people(text: str, url: str, source_type: str, soup: BeautifulSoup | 
             title = "Founder" if verb in ("founded", "established", "started", "created") else "Owner"
             ctx = text[max(0, m.start() - 60): m.end() + 60].replace("\n", " ")
             found.append(PersonFinding(n, title, ROLE_EXEC, url, source_type, ctx, "strong"))
+    slug = _PROFILE_SLUG.search(url.lower())
+    for m in _NAME_FOUNDED.finditer(text):
+        cand = m.group(1)
+        ctx = text[max(0, m.start() - 40): m.end() + 60].replace("\n", " ")
+        n = clean_name(cand)
+        pattern = "strong"
+        if not n and slug and len(cand.split()) == 1 and slug.group(1).split("-")[0] == fold(cand):
+            # first name only on the page; surname taken from the profile URL (/team/phil-francis/)
+            n = " ".join(t.capitalize() for t in slug.group(1).split("-"))
+            pattern = "weak"
+            ctx += f"  [surname from page URL {url}]"
+        if n:
+            found.append(PersonFinding(n, "Founder", ROLE_EXEC, url, source_type, ctx, pattern))
     for m in _I_AM.finditer(text):
         n = clean_name(m.group(1))
         if n:
@@ -296,6 +315,7 @@ def _title_phrase(line: str, title: str) -> str:
     """Expand a matched keyword to the surrounding title phrase, e.g. 'Director' -> 'Sales & Marketing Director'."""
     m = re.search(r"((?:[A-Z][\w&/]*\s+){0,3}" + re.escape(title) + r"(?:\s+(?:of|for|&|and)\s+[A-Z][\w&/]*(?:\s+[A-Z][\w&/]*){0,2})?)", line, re.I)
     phrase = (m.group(1) if m else title).strip()
+    phrase = re.sub(r"^(?:(?:meet|about|our|the|with|from|by|and|is|as)\s+)+", "", phrase, flags=re.I)
     # drop a leading person name that may have been captured
     for n in _names_in(phrase):
         phrase = phrase.replace(n, "").strip(" ,-–—|:")
@@ -335,10 +355,20 @@ def extract_emails(html: str, text: str, url: str, source_type: str, soup: Beaut
         if dom in JUNK_EMAIL_DOMAINS or addr.endswith(JUNK_EMAIL_SUFFIXES) or re.search(r"@\d+x\.", addr):
             continue
         local = addr.split("@", 1)[0]
-        kind = "generic" if (local in GENERIC_LOCALPARTS or re.sub(r"[\d._-]+$", "", local) in GENERIC_LOCALPARTS) else "personal"
+        kind = "generic" if is_generic_local(local) else "personal"
         out.append(EmailFinding(addr, kind, url, source_type, ctx))
     cf = "data-cfemail" in html or "/cdn-cgi/l/email-protection" in html
     return out, cf
+
+
+GENERIC_FRAGMENTS = re.compile(r"(sales|info|enquir|inquir|service|support|order|account|admin|contact|office|booking|"
+                               r"rental|reception|dealer|retail|wholesale|purchas|procure|marketing|hello|warrant|return)")
+
+
+def is_generic_local(local: str) -> bool:
+    local = local.lower()
+    return (local in GENERIC_LOCALPARTS or re.sub(r"[\d._-]+$", "", local) in GENERIC_LOCALPARTS
+            or bool(GENERIC_FRAGMENTS.search(local)))
 
 
 def email_matches_person(email: str, name: str) -> str:
@@ -362,9 +392,12 @@ def email_matches_person(email: str, name: str) -> str:
 
 # ================================================================== phones
 def _phone_type(ctx_before: str, ctx_after: str, ext: str, kind: str, person: str) -> str:
-    ctx = ctx_before[-60:] + " " + ctx_after[:20]
+    # Only the label right before the number counts ("Mobile 07.. | Office 0800.." must not make the office line a mobile).
+    ctx = ctx_before[-30:] + " " + ctx_after[:12]
     if FAX_HINT.search(ctx_before[-25:]):
         return "Fax"
+    if kind == "toll_free":
+        return "Switchboard / main line (toll-free)"
     if person:
         if ext:
             return "Extension"
@@ -375,7 +408,7 @@ def _phone_type(ctx_before: str, ctx_after: str, ext: str, kind: str, person: st
         return "Extension (person not stated)"
     if DIRECT_HINT.search(ctx):
         return "Direct dial (person not stated)"
-    if DEPT_HINT.search(ctx_before[-40:]):
+    if DEPT_HINT.search(ctx_before[-30:]):
         return "Department line"
     if kind == "mobile" or MOBILE_HINT.search(ctx):
         return "Company-listed mobile (not tied to a named person)"
@@ -411,6 +444,14 @@ def extract_phones(text: str, url: str, source_type: str, region: str | None,
             pos = fold(window).rfind(fold(n))
             if pos > best:
                 best, person = pos, n
+        if not person:
+            firsts = [n.split()[0] for n in person_names]
+            for n in person_names:
+                first = n.split()[0]
+                if len(first) >= 3 and firsts.count(first) == 1:
+                    m = list(re.finditer(rf"\b{re.escape(first)}\b", window[-60:]))
+                    if m:
+                        person = n
         if person and "\n\n" in window[best:]:
             person = ""
         display = phonenumbers.format_number(num, PhoneNumberFormat.INTERNATIONAL) + (f" ext. {ext}" if ext else "")
@@ -444,7 +485,8 @@ def extract_phones(text: str, url: str, source_type: str, region: str | None,
 
 # ============================================================ company identity
 LEGAL_SUFFIX = r"(?:Pty\.?\s*Ltd\.?|Ltd\.?|Limited|LLC|L\.L\.C\.|Inc\.?|Corp\.?|GmbH|S\.?A\.?C\.?|S\.?A\.? de C\.?V\.?|Sdn\.?\s*Bhd\.?|Pte\.?\s*Ltd\.?|S\.?r\.?l\.?|S\.?L\.?|B\.?V\.?|PLC)"
-LEGAL_NAME_RE = re.compile(r"((?:[A-Z0-9][\w&'’.-]*\s){1,6}" + LEGAL_SUFFIX + r")(?![\w])")
+LEGAL_NAME_RE = re.compile(r"((?:(?:[A-Z0-9][\w'’.-]*|&|and|of|de|y|e)\s){1,7}" + LEGAL_SUFFIX + r")(?![\w])")
+LEGAL_LEADIN = re.compile(r"^(?:(?:copyright|©|all|rights|reserved|\d{4}|[-–])\s*)+", re.I)
 
 
 def company_identity(soup: BeautifulSoup, text: str, domain: str) -> dict:
@@ -473,16 +515,28 @@ def company_identity(soup: BeautifulSoup, text: str, domain: str) -> dict:
         for m in re.finditer(r"(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]?\s*\d{0,4})?\s*(.{3,80})", text, re.I):
             lm = LEGAL_NAME_RE.search(m.group(1))
             if lm:
-                ident["legal_name"] = lm.group(1).strip()
-                break
+                name = LEGAL_LEADIN.sub("", lm.group(1)).strip()
+                if len(name.split()) >= 2:
+                    ident["legal_name"] = name
+                    break
     return ident
 
 
+def _shares_token(name: str, domain: str) -> bool:
+    stem = re.sub(r"[^a-z]", "", fold(domain.split(".")[0]))
+    return any(len(t) >= 4 and t in stem for t in re.findall(r"[a-z]+", fold(name)))
+
+
 def best_company_name(ident: dict, domain: str) -> str:
-    if ident.get("legal_name"):
-        return ident["legal_name"]
-    if ident.get("site_name"):
-        return ident["site_name"]
+    """Prefer a legal name that plausibly matches the domain; otherwise the site's own name."""
+    legal = ident.get("legal_name", "")
+    site = ident.get("site_name", "")
+    if legal and (_shares_token(legal, domain) or (site and _shares_token(legal, site))):
+        return legal
+    if site:
+        return site
+    if legal and not ident.get("title"):
+        return legal
     title = ident.get("title", "")
     stem = re.sub(r"[^a-z]", "", domain.split(".")[0])
     parts = [p.strip() for p in re.split(r"\s[|\-–—:]\s", title) if p.strip()]
@@ -496,7 +550,8 @@ def best_company_name(ident: dict, domain: str) -> str:
             common += 1
         if common > score:
             best, score = p, common
-    return best
+    best = best.strip(" '\"-–—|:")
+    return best or domain
 
 
 PARKED_MARKERS = ("domain is for sale", "buy this domain", "this domain may be for sale", "parked free",

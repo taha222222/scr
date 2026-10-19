@@ -156,3 +156,47 @@ def test_pipeline_with_fake_search(monkeypatch, tmp_path):
     assert res["phones"][res["phone"]]["phone_type"] == "Business mobile"
     assert res["search_queries_used"] <= s.max_search_queries_per_company
     assert res["manual_queries"]
+
+
+# ---- regressions found on the live KS Medical list (synthetic text, same shapes)
+def test_bare_chief_executive_and_named_email():
+    text = "Meet the Team\nSam Example\nChief Executive\nLocation: Truro\nAlex Sample\nChief Operating Officer – COO"
+    people = vf.aggregate_people(ex.extract_people(text, "https://x.co.uk/team", "official_website"))
+    names = {p["name"]: p for p in people}
+    assert names["Sam Example"]["role_category"] == ex.ROLE_EXEC
+    emails = [ex.EmailFinding("sam.example@x.co.uk", "personal", "https://x.co.uk/team", "official_website", "")]
+    vf.attribute_contacts(people, emails, [])
+    assert vf.choose_primary(people, emails, [])["name"] == "Sam Example"
+
+
+def test_building_names_are_not_people():
+    text = "13.3 Our principal place of business is at Atomus House, Harvest Way"
+    assert ex.extract_people(text, "https://x.co.uk/privacy", "official_website") == []
+
+
+def test_first_name_founder_completed_from_profile_slug():
+    people = ex.extract_people("Phil\nPhil Founded Example Mobility Ltd in 2008",
+                               "https://x.co.uk/team/phil-francis/", "official_website")
+    assert people and people[0].name == "Phil Francis" and people[0].pattern == "weak"
+    phones = ex.extract_phones("Call Phil direct on 07733 438555 to discuss.", "https://x.co.uk/about",
+                               "official_website", "GB", ["Phil Francis"])
+    assert phones[0].person_name == "Phil Francis" and phones[0].phone_type == "Business mobile"
+    assert ex.email_matches_person("phil@x.co.uk", "Phil Francis")
+
+
+def test_office_line_not_labelled_mobile_and_role_mailboxes():
+    phones = ex.extract_phones("Mobile 07733 438555 | Office 0800 772 3210 | Demos", "u", "official_website", "GB", [])
+    by = {p.e164: p for p in phones}
+    assert by["+448007723210"].phone_type.startswith("Switchboard")
+    assert by["+447733438555"].phone_type.startswith("Company-listed mobile")
+    assert ex.is_generic_local("retailsales") and ex.is_generic_local("dealersales")
+    assert not ex.is_generic_local("simon.blamey")
+
+
+def test_company_name_cleanup():
+    soup = ex.page_soup("<title>Home - ReActiv</title>")
+    ident = ex.company_identity(soup, "Copyright 2026 ReActiv S.A. de C.V.", "reactiv.com.mx")
+    assert ex.best_company_name(ident, "reactiv.com.mx") == "ReActiv S.A. de C.V."
+    ident = ex.company_identity(ex.page_soup("<title>Gold Coast Recreation</title>"),
+                                "© Gold Coast Recreation & Sport Inc", "gcrs.com.au")
+    assert ident["legal_name"] == "Gold Coast Recreation & Sport Inc"

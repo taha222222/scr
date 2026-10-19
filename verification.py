@@ -191,7 +191,8 @@ def attribute_contacts(people: list[dict], emails: list[ex.EmailFinding], phones
     for group in by_number.values():
         unattributed = [g for g in group if not g.person_name]
         attributed = [g for g in group if g.person_name]
-        if attributed and (unattributed or any(g.number_kind == "toll_free" for g in group)):
+        company_line = [g for g in unattributed if g.phone_type.startswith(("Switchboard", "Department"))]
+        if attributed and (company_line or any(g.number_kind == "toll_free" for g in group)):
             for g in attributed:
                 g.phone_type = f"Switchboard / main line (also printed next to {g.person_name})"
                 g.person_name = ""
