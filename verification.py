@@ -191,8 +191,15 @@ def attribute_contacts(people: list[dict], emails: list[ex.EmailFinding], phones
     for group in by_number.values():
         unattributed = [g for g in group if not g.person_name]
         attributed = [g for g in group if g.person_name]
-        company_line = [g for g in unattributed if g.phone_type.startswith(("Switchboard", "Department"))]
-        if attributed and (company_line or any(g.number_kind == "toll_free" for g in group)):
+        switchboard = [g for g in unattributed if g.phone_type.startswith("Switchboard")]
+        department = [g for g in unattributed if g.phone_type.startswith("Department")]
+        if attributed and department and not switchboard:
+            # conflicting labels: keep the person link but say so
+            for g in attributed:
+                g.phone_type += " - conflict: also printed as a department line"
+                g.context += "  || elsewhere: " + department[0].context[-160:]
+            continue
+        if attributed and (switchboard or any(g.number_kind == "toll_free" for g in group)):
             for g in attributed:
                 g.phone_type = f"Switchboard / main line (also printed next to {g.person_name})"
                 g.person_name = ""

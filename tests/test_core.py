@@ -200,3 +200,11 @@ def test_company_name_cleanup():
     ident = ex.company_identity(ex.page_soup("<title>Gold Coast Recreation</title>"),
                                 "© Gold Coast Recreation & Sport Inc", "gcrs.com.au")
     assert ident["legal_name"] == "Gold Coast Recreation & Sport Inc"
+
+
+def test_person_number_also_labelled_department_keeps_person_with_conflict():
+    a = ex.extract_phones("Call Phil direct on 07733 438555 today", "u1", "official_website", "GB", ["Phil Francis"])
+    b = ex.extract_phones("Office: 0117 000 0000\nSales Engineer: 07733 438555", "u2", "official_website", "GB", ["Phil Francis"])
+    phones = vf.attribute_contacts([], [], a + b)
+    mob = [p for p in phones if p.e164 == "+447733438555"][0]
+    assert mob.person_name == "Phil Francis" and "conflict" in mob.phone_type

@@ -349,7 +349,7 @@ class Researcher:
             if p["conflicts"]:
                 notes.append(p["conflicts"])
             if any(s["pattern"] == "weak" for s in p["sources"]) and not any(s["pattern"] == "strong" for s in p["sources"]):
-                notes.append("Name/title pairing was inferred from page layout (adjacent lines) - review the snippet in Sources.")
+                notes.append("Weak evidence: name/title pairing inferred from page layout, or surname taken from a profile URL - review the snippet in Sources.")
             if not direct_email:
                 todo.append(f"Named work email for {p['name']} not found publicly.")
             if not direct_phone:
